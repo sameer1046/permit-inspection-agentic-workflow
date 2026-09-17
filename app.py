@@ -30,6 +30,15 @@ def to_case(raw_case):
     return InspectionCase(case_id=raw_case['case_id'], items=items)
 
 
+def build_agents():
+    return AgentRegistry({
+        'structural_check': StructuralCheckAgent(
+            OpenAIInspectionClient('prompts/structural_check.txt')),
+        'systems_check': SystemsCheckAgent(
+            OpenAIInspectionClient('prompts/systems_check.txt')),
+    })
+
+
 st.title('Permit Inspection Sign-Off Workflow')
 st.caption('Ridgeview County building department - field inspection to permit decision')
 
@@ -41,12 +50,10 @@ with st.sidebar:
                              for item in raw_case['items']})
     gated_categories = st.multiselect(
         'Gated categories', all_categories,
-        default=['electrical_rough_in'] if 'electrical_rough_in' in all_categories else [])
-    hard_block_categories = st.multiselect(
-        'Hard-block categories', all_categories,
-        default=['fire_protection'] if 'fire_protection' in all_categories else [])
-    risk_gate_threshold = st.slider('Risk gate threshold', 0.0, 1.0, 0.7, 0.05)
-    max_retries = st.number_input('Max retries', min_value=0, max_value=3, value=1)
+        default=[c for c in ['fire_protection'] if c in all_categories])
+    risk_threshold = st.slider('Risk threshold', 0.0, 1.0, 0.7, 0.05)
+    max_attempts = st.number_input('Max attempts per specialist', min_value=1, max_value=5,
+                                   value=2)
 
 if not raw_cases:
     st.warning('No cases found in data/cases.json.')
@@ -55,29 +62,22 @@ else:
     selected_case_id = st.selectbox('Inspection case', options)
     selected_case = next(rc for rc in raw_cases if rc['case_id'] == selected_case_id)
     st.subheader('Inspection observations')
-    st.dataframe(pd.DataFrame(selected_case['items'])[['id', 'category', 'observation']])
+    st.dataframe(pd.DataFrame(selected_case['items']))
 
     if st.button('Run inspection'):
         config = WorkflowConfig(
             gated_categories=gated_categories,
-            risk_gate_threshold=risk_gate_threshold,
-            hard_block_categories=hard_block_categories,
-            max_retries=int(max_retries),
+            risk_threshold=risk_threshold,
+            max_attempts=int(max_attempts),
         )
         try:
             with st.spinner('Running inspection...'):
-                agents = AgentRegistry({
-                    'structural_check': StructuralCheckAgent(
-                        OpenAIInspectionClient('prompts/structural_check.txt')),
-                    'systems_check': SystemsCheckAgent(
-                        OpenAIInspectionClient('prompts/systems_check.txt')),
-                })
+                agents = build_agents()
                 state = InspectionWorkflow(agents, config).start(to_case(selected_case))
         except NotImplementedError:
             st.error('InspectionWorkflow.start() is not implemented yet.')
         except OpenAIError:
-            st.error('The inspection model is unavailable. '
-                     'Set OPENAI_API_KEY and try again.')
+            st.error('The inspection model is unavailable. Set OPENAI_API_KEY and try again.')
         else:
             st.session_state['state'] = state
             st.session_state['config'] = config
@@ -87,29 +87,31 @@ state = st.session_state.get('state')
 if state is not None:
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric('Status', state.status)
+        st.metric('Status', state['status'])
     with col2:
-        st.metric('Permit status', state.permit_status or '-')
+        st.metric('Permit status', state['permit_status'] or '-')
     with col3:
-        st.metric('Error', state.error or '-')
+        st.metric('Error', state['error'] or '-')
 
-    if state.items:
+    if state['items']:
         st.subheader('Item outcomes')
-        st.dataframe(pd.DataFrame(state.items))
+        outcomes = pd.DataFrame(state['items'])
+        outcomes['category'] = outcomes['item_id'].map(state['item_categories'])
+        st.dataframe(outcomes)
 
-    if state.rejected_verdicts:
+    if state['rejected_verdicts']:
         st.subheader('Rejected verdicts')
-        st.dataframe(pd.DataFrame(state.rejected_verdicts))
+        st.dataframe(pd.DataFrame(state['rejected_verdicts']))
 
-    if state.trace:
+    if state['trace']:
         st.subheader('Trace')
-        st.dataframe(pd.DataFrame(state.trace))
+        st.dataframe(pd.DataFrame(state['trace']))
 
-    if state.status == 'suspended_pending_human':
+    if state['status'] == 'suspended_pending_human':
         st.subheader('Inspector decision panel')
         st.caption('Simulates the on-call inspector clearing pending items over the shift.')
         decisions_by_item = {}
-        for item_id in state.pending_items:
+        for item_id in state['pending_items']:
             decisions_by_item[item_id] = st.selectbox(
                 f'Decision for {item_id}',
                 ['no decision yet', 'approve', 'reject', 'defer'],

@@ -1,53 +1,55 @@
 [
   {
-    "case_id": "RC-2026-0148",
+    "case_id": "INS-9001",
     "items": [
       {
-        "id": "item-1",
-        "category": "structural_framing",
-        "observation": "Two floor joists notched at midspan to route a waste line; notch depth roughly one third of joist depth.",
-        "applicable_code_sections": ["R502.3", "R602.3"],
-        "specialists": ["structural_check"]
+        "id": "ITM-21",
+        "category": "foundation",
+        "observation": "Anchor bolts set at 6 feet on center with 7 inches of embedment; no deficiencies observed.",
+        "applicable_code_sections": ["R301.1", "R602.3"],
+        "primary_specialist": "structural_check"
       },
       {
-        "id": "item-2",
-        "category": "electrical_rough_in",
-        "observation": "Panel installed with 28 inches of working clearance; three junction boxes left without covers.",
-        "applicable_code_sections": ["E3601.6", "E3906.2"],
-        "specialists": ["systems_check"]
-      },
-      {
-        "id": "item-3",
-        "category": "fire_protection",
-        "observation": "Sprinkler tamper switch wired but not reporting to the monitoring panel.",
-        "applicable_code_sections": ["F903.4"],
-        "specialists": ["systems_check", "structural_check"]
-      },
-      {
-        "id": "item-4",
+        "id": "ITM-22",
         "category": "plumbing_rough_in",
         "observation": "DWV system held pressure for the full test duration with no observed drop.",
         "applicable_code_sections": ["P2503.5"],
-        "specialists": ["systems_check"]
+        "primary_specialist": "systems_check"
+      },
+      {
+        "id": "ITM-23",
+        "category": "fire_protection",
+        "observation": "Sprinkler tamper switch wired but not reporting to the monitoring panel.",
+        "applicable_code_sections": ["F903.4", "E3906.2"],
+        "primary_specialist": "systems_check",
+        "secondary_specialist": "structural_check"
       }
     ]
   },
   {
-    "case_id": "RC-2026-0152",
+    "case_id": "INS-9002",
     "items": [
       {
-        "id": "item-1",
+        "id": "ITM-31",
         "category": "structural_framing",
-        "observation": "Exterior wall sheathing fastened at the specified schedule; no deficiencies observed.",
-        "applicable_code_sections": ["R301.1", "R602.3"],
-        "specialists": ["structural_check"]
+        "observation": "Two floor joists notched at midspan to route a waste line; notch depth roughly one third of joist depth.",
+        "applicable_code_sections": ["R502.3", "R602.3"],
+        "primary_specialist": "structural_check",
+        "secondary_specialist": "systems_check"
       },
       {
-        "id": "item-2",
+        "id": "ITM-32",
+        "category": "electrical_rough_in",
+        "observation": "Panel installed with 28 inches of working clearance; three junction boxes left without covers.",
+        "applicable_code_sections": ["E3601.6", "E3906.2"],
+        "primary_specialist": "systems_check"
+      },
+      {
+        "id": "ITM-33",
         "category": "mechanical_rough_in",
         "observation": "Supply duct in unconditioned attic supported every 12 feet and sealed at all joints.",
         "applicable_code_sections": ["M1601.4"],
-        "specialists": ["systems_check"]
+        "primary_specialist": "systems_check"
       }
     ]
   }

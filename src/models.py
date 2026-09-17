@@ -16,6 +16,12 @@ class Source(str, Enum):
     HUMAN_DEFERRED = 'human_deferred'
 
 
+class AttemptStatus(str, Enum):
+    SUCCESS = 'success'
+    UNAVAILABLE = 'unavailable'
+    MALFORMED = 'malformed'
+
+
 class ValidationCode(str, Enum):
     UNGROUNDED_CITATION = 'UNGROUNDED_CITATION'
     RISK_OUT_OF_RANGE = 'RISK_OUT_OF_RANGE'
@@ -36,7 +42,8 @@ class InspectionItem:
     category: str
     observation: str
     applicable_code_sections: list = field(default_factory=list)
-    specialists: list = field(default_factory=list)
+    primary_specialist: Optional[str] = None
+    secondary_specialist: Optional[str] = None
 
 
 @dataclass
@@ -61,31 +68,10 @@ class HumanDecision:
 
 
 @dataclass
-class TraceEvent:
-    step: str
-    item_id: Optional[str] = None
-    detail: Optional[str] = None
-
-
-@dataclass
-class WorkflowState:
-    case_id: Optional[str] = None
-    status: str = 'complete'
-    pending_items: list = field(default_factory=list)
-    items: list = field(default_factory=list)
-    rejected_verdicts: list = field(default_factory=list)
-    permit_status: Optional[str] = None
-    error: Optional[str] = None
-    trace: list = field(default_factory=list)
-    item_categories: dict = field(default_factory=dict)
-
-
-@dataclass
 class WorkflowConfig:
     gated_categories: list = field(default_factory=list)
-    hard_block_categories: list = field(default_factory=list)
-    risk_gate_threshold: float = 0.7
-    max_retries: int = 1
+    risk_threshold: float = 0.7
+    max_attempts: int = 2
 
 
 class AgentRegistry:

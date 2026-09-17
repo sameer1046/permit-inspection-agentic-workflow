@@ -1,6 +1,4 @@
-import dataclasses
-
-from src.models import TraceEvent, WorkflowState
+from src.models import ErrorCode, Verdict
 
 
 def new_suspension(case_id, item_states):
@@ -14,27 +12,42 @@ def new_suspension(case_id, item_states):
         })
         if entry.get('pending'):
             pending.append(entry['item_id'])
-    return WorkflowState(
-        case_id=case_id,
-        status='suspended_pending_human',
-        pending_items=pending,
-        items=items,
-        rejected_verdicts=[],
-        permit_status=None,
-        error=None,
-        trace=[],
-        item_categories={},
-    )
+    return {
+        'case_id': case_id,
+        'status': 'suspended_pending_human',
+        'pending_items': pending,
+        'items': items,
+        'rejected_verdicts': [],
+        'permit_status': None,
+        'error': None,
+        'trace': [],
+        'item_categories': {},
+    }
 
 
 def pending_items(state):
-    return list(state.pending_items)
+    return list(state.get('pending_items') or [])
 
 
-def copy_state(state, **changes):
-    return dataclasses.replace(state, **changes)
+def invalid_case_state(case_id):
+    return {
+        'case_id': case_id,
+        'status': 'failed',
+        'pending_items': [],
+        'items': [],
+        'rejected_verdicts': [],
+        'permit_status': None,
+        'error': ErrorCode.INVALID_REQUEST.value,
+        'trace': [],
+        'item_categories': {},
+    }
 
 
-def trace(state, step, item_id=None, detail=None):
-    state.trace.append(dataclasses.asdict(TraceEvent(step=step, item_id=item_id, detail=detail)))
-    return state
+def trace_entry(step, item_id, attempt, status):
+    return {'step': step, 'item_id': item_id, 'attempt': attempt, 'status': status}
+
+
+def calculate_permit_status(items):
+    if any(entry['final_verdict'] == Verdict.NON_COMPLIANT.value for entry in items):
+        return 'denied'
+    return 'approved'

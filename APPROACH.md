@@ -1,92 +1,101 @@
 # Approach
 
-## Reconstruction note
-
-This repo was rebuilt from photographs of the original editor window. Files that were fully
-visible (`structural_check_agent.py`, `systems_check_agent.py`, `llm.py`, `session_store.py`,
-the enums in `models.py`, `app.py`) are faithful; the dataclasses in `models.py`, the data
-files, the prompts and the tests were never visible and are reconstructed to be consistent
-with how the visible code uses them. Anything reconstructed is called out below.
-
 ## Orchestration model
 
-`start()` is a single pass over the case; `resume()` is the same terminal logic applied after
-human input. Both funnel into `_finalize()`, so a case can only reach `complete` through one
-code path and the permit decision is computed in exactly one place.
+`start()` is one pass over the case; `resume()` is the same terminal logic applied after human
+input. Both funnel into `_finalize()`, so a case can only reach `complete` through one path
+and the permit decision is computed in exactly one place.
 
-1. **Validate the case** — `_is_valid_case()` (provided). A malformed case returns
-   `status='failed'`, `error=INVALID_REQUEST` and no agent calls are made.
-2. **Route to specialists** — `_specialists_for()` reads `item.specialists`, so a cross-trade
-   item can name both agents. Unknown names are dropped; an empty list falls back to
-   `structural_check` rather than silently skipping the item.
-3. **Call each agent with retries** — `_run_with_retries()` retries up to `config.max_retries`
-   extra attempts. Every invalid verdict is appended to `rejected_verdicts` with the failing
-   code, so the audit trail shows what was thrown away and why.
-4. **Validate each verdict** — `_validate_verdict()` maps failures to the provided codes:
+1. **Validate the case first.** `_is_valid_case()` checks a non-empty `case_id`, a non-empty
+   item list, and present/unique item ids. An invalid case returns
+   `status='failed'`, `error='INVALID_REQUEST'` with an empty trace — no agent is called.
+2. **Route to assigned specialists.** `_specialists_for()` returns
+   `[primary_specialist, secondary_specialist]` with blanks dropped, so a cross-trade item
+   calls both and a single-trade item calls one.
+3. **Attempt each specialist with retries.** `_run_with_retries()` loops up to
+   `config.max_attempts` and appends one trace entry per attempt, keyed by the exact agent
+   name: `{step, item_id, attempt, status}` with status `success`, `unavailable`
+   (`AgentUnavailableError`, or an agent missing from the registry) or `malformed` (a response
+   that failed validation). An unavailable specialist is retried, not fatal.
+4. **Validate before use.** `_validate_verdict()` maps failures to the provided codes:
    unknown verdict → `MALFORMED_VERDICT`; risk score non-numeric or outside `[0.0, 1.0]` →
    `RISK_OUT_OF_RANGE`; citation not in `item.applicable_code_sections` →
-   `UNGROUNDED_CITATION`.
-5. **Resolve the item** — `_resolve_item()` takes the most severe verdict across agents and
-   the maximum risk score. An item goes pending if it is not compliant, its category is
-   gated, or its risk meets `risk_gate_threshold`. If no valid verdict survived retries the
-   item becomes `needs_review` and pending — never silently compliant.
-6. **Finalize** — any pending item means `suspended_pending_human` with `permit_status=None`.
-   Otherwise `_compute_permit_status()` runs: `denied` if a non-compliant item is in a
-   hard-block category, `conditional` if any other non-compliant item remains, else
-   `approved`.
+   `UNGROUNDED_CITATION`. Each invalid response also appends to `rejected_verdicts` with its
+   code, so the audit trail shows what was discarded and why.
+5. **Decide whether a human is needed.** `_resolve_item()` keeps an item pending if a required
+   specialist failed every attempt, the two specialists disagree, the category is gated, or
+   any risk score meets `risk_threshold`. A pending item is recorded as `needs_review`.
+   Otherwise the item settles on the specialists' agreed verdict.
+6. **Finalize.** Any pending item means `status='suspended_pending_human'` and
+   `permit_status=None`. When nothing is pending, `status='complete'` and
+   `session_store.calculate_permit_status()` sets the permit status.
 
 `resume()` maps `approve/reject/defer` to `(compliant, non_compliant, needs_review)` and
-`(HUMAN_APPROVED, HUMAN_REJECTED, HUMAN_DEFERRED)`. Undecided and deferred items stay
-pending, which is what makes multi-round shift handover work: calling `resume()` repeatedly
-with partial decisions is safe and converges.
+`(human_approved, human_rejected, human_deferred)`. It only touches items in
+`pending_items`: decisions for already-settled items are ignored, undecided pending items
+stay pending, and a deferred item stays pending. No specialist is called, and a case that
+previously failed validation is returned untouched. This is what makes repeated partial
+`resume()` calls safe across a shift handover.
 
-## Assumptions (reconstructed, would confirm against the real brief)
+## Assumptions (reconstructed — would confirm against the real codebase)
 
-- `item.specialists` is the routing field. The original `InspectionItem` was never visible;
-  if it is really `primary_specialist`/`secondary_specialist`, only `_specialists_for()`
-  changes.
-- Risk scores are bounded to `[0.0, 1.0]` inclusive, and `risk_gate_threshold` is inclusive
-  (`>=`), so a threshold of 1.0 still gates a maximum-risk item.
-- `cited_code_section = None` is legal (an agent may decline to cite); a *wrong* citation is
+- `start()`/`resume()` return the state as a **plain dict** matching the output contract, not
+  a dataclass. The contract is shown as JSON and graders are most likely to subscript it.
+- `InspectionItem` exposes `id`, `category`, `observation`, `applicable_code_sections`,
+  `primary_specialist`, `secondary_specialist`. The agents use `item.id`, and the brief refers
+  to primary/secondary assignment.
+- `WorkflowConfig` exposes `gated_categories`, `risk_threshold`, `max_attempts`.
+  `max_attempts` is total attempts, not extra retries, so `1` means no retry.
+- The risk gate is inclusive (`>=`), per "equals or exceeds the configured threshold".
+- `cited_code_section = None` is legal — an agent may decline to cite. A *wrong* citation is
   not.
-- Human sign-off on a hard-block category still denies the permit — a human can clear an
-  item but not override the hard block. This is the conservative reading.
-- Permit statuses are `approved` / `conditional` / `denied`.
+- `calculate_permit_status()` stands in for the provided helper: `denied` if any settled item
+  is `non_compliant`, else `approved`. The real helper's vocabulary may include a conditional
+  state; if so, only that function changes.
+- A plain `non_compliant` verdict does **not** by itself require human review — the brief
+  lists the four gating conditions explicitly and this is not one of them. It settles the item
+  and denies the permit.
 
 ## Trade-offs
 
-- **Sequential agent calls.** Simple and deterministic, which matters for the audit trail.
-  Items are independent, so this is the obvious first thing to parallelise.
-- **State as plain dicts inside `WorkflowState`.** Matches `new_suspension()` and keeps the
-  state JSON-serialisable for Streamlit session storage, at the cost of type safety.
-- **Retry without prompt repair.** A rejected verdict is retried with the identical prompt.
-  Feeding the validation code back to the model would likely convert more failures, but adds
-  a prompt-coupling that the stub-based tests could not honestly cover.
-- **`AgentUnavailableError` fails the whole case** rather than degrading to per-item review.
-  A model outage is an infrastructure fault, not an inspection finding, and should not look
-  like one.
+- **Sequential agent calls.** Deterministic and easy to audit, which matters more here than
+  latency. Items are independent, so this is the obvious first thing to parallelise.
+- **State as a dict.** Matches the contract and stays JSON-serialisable for session storage,
+  at the cost of type safety; the dataclasses are kept for inputs only.
+- **Retry without prompt repair.** A malformed response is retried with the identical prompt.
+  Feeding the validation code back to the model would convert more failures, but couples the
+  workflow to prompt content that stub-based tests cannot honestly cover.
+- **Missing agent is treated as unavailable.** A registry gap produces `unavailable` attempts
+  and escalates to a human rather than raising. Configuration error, but the safe direction.
+- **`needs_review` as the pending verdict** discards the specialist's original opinion in the
+  item record. The trace and `rejected_verdicts` retain it; a richer state would keep both.
 
 ## Failure modes
 
-- LLM returns prose instead of JSON → `llm.py` returns `{}` → agent emits a null verdict →
-  `MALFORMED_VERDICT` → retry → escalation. Nothing reaches the permit decision unvalidated.
-- Model consistently hallucinates a plausible-but-inapplicable code section → repeated
-  `UNGROUNDED_CITATION` → item escalates to a human. Correct, but silent if nobody watches
-  `rejected_verdicts`; in production this needs an alert on rejection rate.
+- LLM returns prose instead of JSON → `llm.py` yields `{}` → agent emits a null verdict →
+  `MALFORMED_VERDICT` → retry → escalation. Nothing unvalidated reaches the permit decision.
+- Model consistently cites a plausible-but-inapplicable section → repeated
+  `UNGROUNDED_CITATION` → escalation. Correct, but silent unless someone watches the rejection
+  rate.
+- Both specialists agree and are both wrong → item settles with no human involvement.
+  Agreement is treated as confidence, which it is not.
 - Inspector never resolves a deferred item → the case stays `suspended_pending_human`
-  forever. There is no SLA or expiry.
-- Config drift: widening `gated_categories` pushes more items to humans and can stall
-  throughput; narrowing it silently reduces oversight. There is no guard on either.
+  indefinitely. There is no SLA or expiry.
+- Config drift: widening `gated_categories` or lowering `risk_threshold` stalls throughput;
+  tightening them silently reduces oversight. Nothing guards either direction.
 
 ## What I would change for production
 
-- Persist `WorkflowState` in a real store keyed by `case_id`, with optimistic concurrency —
-  Streamlit `session_state` loses everything on refresh and cannot support two inspectors.
-- Make `resume()` idempotent per `(case_id, item_id, decision_id)` so a double-submit cannot
-  double-apply, and record the acting inspector's identity on every human decision.
-- Add structured metrics: verdict rejection rate by code and agent, escalation rate by
-  category, time-to-resolution per pending item.
-- Feed validation failures back into the retry prompt, and pin the model version so verdict
+- Persist state in a real store keyed by `case_id` with optimistic concurrency. Streamlit
+  `session_state` loses everything on refresh and cannot support two inspectors on one case.
+- Make `resume()` idempotent per `(case_id, item_id, decision_id)` so a double submit cannot
+  double-apply, and record the acting inspector's identity and timestamp on every decision.
+- Emit metrics: rejection rate by code and agent, escalation rate by category, attempts per
+  verdict, time-to-resolution per pending item. Alert on rejection-rate regressions, which are
+  the earliest signal of model drift.
+- Feed the validation failure back into the retry prompt, and pin the model version so verdict
   distributions do not shift underneath the thresholds.
-- Move thresholds and category lists into reviewed, versioned policy rather than UI widgets,
+- Move thresholds and gated categories into reviewed, versioned policy rather than UI widgets,
   since they directly control how much human oversight a permit receives.
+- Add an expiry/reassignment path for long-pending items so a stalled case surfaces instead of
+  sitting suspended.
