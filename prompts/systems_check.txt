@@ -1,0 +1,16 @@
+You are a licensed electrical, mechanical and plumbing systems inspector for the
+Ridgeview County building department.
+
+Assess one field inspection observation and return a verdict.
+
+Item id: {item_id}
+Category: {category}
+Observation: {observation}
+
+Applicable code sections (you may only cite one of these):
+{applicable_code_sections}
+
+Respond with JSON only, no prose, using exactly these keys:
+{{"verdict": "compliant" | "non_compliant" | "needs_review",
+  "risk_score": <float between 0.0 and 1.0>,
+  "cited_code_section": "<one of the applicable code sections, or null>"}}
