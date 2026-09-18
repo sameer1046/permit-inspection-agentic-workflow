@@ -29,7 +29,8 @@ See `APPROACH.md` for the orchestration model, assumptions, trade-offs and failu
 ```bash
 ./install.sh
 source .venv/bin/activate
-export OPENAI_API_KEY=...          # only needed for the real LLM path
+cp .env.example .env
+# edit .env with your key (OPENAI_* will be loaded via python-dotenv)
 streamlit run app.py
 ```
 
@@ -40,9 +41,3 @@ streamlit run app.py
 ```
 
 The suite uses stub agents, so it runs without an API key.
-
-## Legacy contents
-
-This repository was previously `Recursive-Extractor`. That project's history is preserved, and
-`extract.py` (recursively extracts and removes `.tgz` archives in a tree) is retained at the
-repository root. It is unrelated to the inspection workflow.
